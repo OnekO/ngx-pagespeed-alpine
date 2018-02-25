@@ -1,36 +1,5 @@
 ARG ALPINE_VERSION=3.7
 
-################
-# Build libpng #
-################
-FROM alpine:$ALPINE_VERSION AS libpng
-
-# Check https://sourceforge.net/projects/libpng/files/libpng12/
-ARG LIBPNG_VERSION=1.2.59
-ARG LIBPNG_PGPKEY=F54984BFA16C640F
-
-RUN apk --no-cache add \
-        build-base \
-        curl \
-        gnupg \
-        zlib-dev \
-    ;
-
-WORKDIR /usr/src
-RUN curl -LO https://netix.dl.sourceforge.net/project/libpng/libpng12/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz \
-         -LO https://netix.dl.sourceforge.net/project/libpng/libpng12/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz.asc && \
-    (gpg --keyserver ha.pool.sks-keyservers.net --keyserver-options timeout=10 --recv-keys ${LIBPNG_PGPKEY} || \
-     gpg --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options timeout=10 --recv-keys ${LIBPNG_PGPKEY} || \
-     gpg --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options timeout=10 --recv-keys ${LIBPNG_PGPKEY} ) && \
-    gpg --trusted-key ${LIBPNG_PGPKEY} --verify libpng-${LIBPNG_VERSION}.tar.gz.asc
-
-RUN tar zxf libpng-${LIBPNG_VERSION}.tar.gz
-WORKDIR /usr/src/libpng-${LIBPNG_VERSION}
-RUN ./configure --build=$CBUILD --host=$CHOST --prefix=/usr --enable-shared --with-libpng-compat && \
-    make install -j`nproc`
-RUN strip /usr/lib/libpng*.so*
-
-
 ########################
 # Build pagespeed psol #
 ########################
@@ -50,6 +19,7 @@ RUN apk add --no-cache \
         gperf \
         icu-dev \
         libjpeg-turbo-dev \
+        libpng-dev \
         libressl-dev \
         pcre-dev \
         py-setuptools \
@@ -66,10 +36,6 @@ RUN git clone -b ${MOD_PAGESPEED_TAG} \
               modpagespeed \
     ;
 
-COPY --from=libpng /usr/lib/libpng* /usr/lib/
-COPY --from=libpng /usr/lib/pkgconfig/libpng12.pc /usr/lib/pkgconfig/libpng.pc
-COPY --from=libpng /usr/include/libpng12 /usr/include/libpng12/
-
 WORKDIR /usr/src/modpagespeed
 COPY patches/modpagespeed/*.patch ./
 
@@ -83,8 +49,8 @@ WORKDIR /usr/src/modpagespeed
 RUN python build/gyp_chromium --depth=. -D use_system_libs=1 && \
     cd /usr/src/modpagespeed/pagespeed/automatic && \
     make psol BUILDTYPE=Release \
-              CFLAGS+="-I/usr/include/libpng12 -I/usr/include/apr-1" \
-              CXXFLAGS+="-I/usr/include/libpng12 -I/usr/include/apr-1 -DUCHAR_TYPE=uint16_t" \
+              CFLAGS+="-I/usr/include/apr-1" \
+              CXXFLAGS+="-I/usr/include/apr-1 -DUCHAR_TYPE=uint16_t" \
               -j`nproc` \
     ;
 
@@ -167,6 +133,7 @@ RUN apk add --no-cache \
         gnupg \
         icu-dev \
         libjpeg-turbo-dev \
+        libpng-dev \
         libxslt-dev \
         linux-headers \
         libressl-dev \
@@ -174,7 +141,6 @@ RUN apk add --no-cache \
         tar \
         zlib-dev \
     ;
-COPY --from=libpng  /usr/lib/libpng* /usr/lib/
 
 WORKDIR /usr/src
 RUN git clone -b ${NGX_PAGESPEED_TAG} \
@@ -200,7 +166,7 @@ RUN tar zxf ../nginx-${NGINX_VERSION}.tar.gz --strip-components=1 -C . && \
     ./configure \
         ${NGINX_BUILD_CONFIG} \
         --add-module=/usr/src/ngxpagespeed \
-        --with-ld-opt="-Wl,-z,relro,--start-group -lapr-1 -laprutil-1 -licudata -licuuc -lpng12 -lturbojpeg -ljpeg" \
+        --with-ld-opt="-Wl,-z,relro,--start-group -lapr-1 -laprutil-1 -licudata -licuuc -lpng -lturbojpeg -ljpeg" \
     && \
     make install -j`nproc`
 
@@ -228,7 +194,6 @@ LABEL maintainer="Nico Berlee <nico.berlee@on2it.net>" \
       version.nginx="1.12.2" \
       version.ngx-pagespeed="1.13.35.2"
 
-COPY --from=libpng  /usr/lib/libpng*.so* /usr/local/lib/
 COPY --from=pagespeed /usr/bin/envsubst /usr/local/bin
 COPY --from=nginx /usr/sbin/nginx /usr/sbin/nginx
 COPY --from=nginx /usr/lib/nginx/modules/ /usr/lib/nginx/modules/
