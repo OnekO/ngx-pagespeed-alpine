@@ -37,16 +37,19 @@ RUN git clone -b ${MOD_PAGESPEED_TAG} \
     ;
 
 WORKDIR /usr/src/modpagespeed
+
 COPY patches/modpagespeed/*.patch ./
 
 RUN for i in *.patch; do printf "\r\nApplying patch ${i%%.*}\r\n"; patch -p1 < $i || exit 1; done
 
 WORKDIR /usr/src/modpagespeed/tools/gyp
-RUN python setup.py install
+RUN ./setup.py install
 
 WORKDIR /usr/src/modpagespeed
 
-RUN python build/gyp_chromium --depth=. -D use_system_libs=1 && \
+RUN build/gyp_chromium --depth=. \
+                       -D use_system_libs=1 \
+    && \
     cd /usr/src/modpagespeed/pagespeed/automatic && \
     make psol BUILDTYPE=Release \
               CFLAGS+="-I/usr/include/apr-1" \
@@ -56,14 +59,15 @@ RUN python build/gyp_chromium --depth=. -D use_system_libs=1 && \
 
 RUN mkdir -p /usr/src/ngxpagespeed/psol/lib/Release/linux/x64 && \
     mkdir -p /usr/src/ngxpagespeed/psol/include/out/Release && \
-    cp -r /usr/src/modpagespeed/out/Release/obj /usr/src/ngxpagespeed/psol/include/out/Release/ && \
-    cp -r /usr/src/modpagespeed/net /usr/src/ngxpagespeed/psol/include/ && \
-    cp -r /usr/src/modpagespeed/testing /usr/src/ngxpagespeed/psol/include/ && \
-    cp -r /usr/src/modpagespeed/pagespeed /usr/src/ngxpagespeed/psol/include/ && \
-    cp -r /usr/src/modpagespeed/third_party /usr/src/ngxpagespeed/psol/include/ && \
-    cp -r /usr/src/modpagespeed/tools /usr/src/ngxpagespeed/psol/include/ && \
-    cp -r /usr/src/modpagespeed/pagespeed/automatic/pagespeed_automatic.a /usr/src/ngxpagespeed/psol/lib/Release/linux/x64 && \
-    cp -r /usr/src/modpagespeed/url /usr/src/ngxpagespeed/psol/include/
+    mv out/Release/obj /usr/src/ngxpagespeed/psol/include/out/Release/ && \
+    mv pagespeed/automatic/pagespeed_automatic.a /usr/src/ngxpagespeed/psol/lib/Release/linux/x64/ && \
+    mv net \
+       pagespeed \
+       testing \
+       third_party \
+       url \
+       /usr/src/ngxpagespeed/psol/include/ \
+    ;
 
 
 ##########################################
@@ -122,6 +126,7 @@ ARG NGINX_BUILD_CONFIG="\
         --with-file-aio \
         --with-http_v2_module \
     "
+
 RUN apk add --no-cache \
         apr-dev \
         apr-util-dev \
@@ -145,13 +150,13 @@ RUN apk add --no-cache \
 WORKDIR /usr/src
 RUN git clone -b ${NGX_PAGESPEED_TAG} \
               --recurse-submodules \
+              --shallow-submodules \
               --depth=1 \
               -c advice.detachedHead=false \
               -j`nproc` \
               https://github.com/apache/incubator-pagespeed-ngx.git \
               ngxpagespeed \
     ;
-COPY --from=pagespeed /usr/src/ngxpagespeed /usr/src/ngxpagespeed/
 
 RUN wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
          https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz.asc && \
@@ -159,6 +164,8 @@ RUN wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
      gpg --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options timeout=10 --recv-keys ${NGINX_PGPKEY} || \
      gpg --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options timeout=10 --recv-keys $NGINX_PGPKEY} ) && \
     gpg --trusted-key ${NGINX_PGPKEY} --verify nginx-${NGINX_VERSION}.tar.gz.asc
+
+COPY --from=pagespeed /usr/src/ngxpagespeed /usr/src/ngxpagespeed/
 
 WORKDIR /usr/src/nginx
 
@@ -177,8 +184,9 @@ RUN rm -rf /etc/nginx/html/ && \
     install -m644 html/index.html /usr/share/nginx/html/ && \
     install -m644 html/50x.html /usr/share/nginx/html/ && \
     ln -s ../../usr/lib/nginx/modules /etc/nginx/modules && \
-    strip /usr/sbin/nginx* && \
-    strip /usr/lib/nginx/modules/*.so
+    strip /usr/sbin/nginx* \
+          /usr/lib/nginx/modules/*.so \
+    ;
 
 COPY conf/nginx.conf /etc/nginx/nginx.conf
 COPY conf/nginx.vh.default.conf /etc/nginx/conf.d/default.conf
@@ -201,19 +209,19 @@ COPY --from=nginx /etc/nginx /etc/nginx
 COPY --from=nginx /usr/share/nginx/html/ /usr/share/nginx/html/
 
 RUN apk --no-cache upgrade && \
-    scanelf --needed --nobanner --format '%n#p' /usr/sbin/nginx /usr/lib/nginx/modules/*.so /usr/local/bin/envsubst /usr/local/lib/libpng12.so \
+    scanelf --needed --nobanner --format '%n#p' /usr/sbin/nginx /usr/lib/nginx/modules/*.so /usr/local/bin/envsubst \
             | tr ',' '\n' \
             | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
             | xargs apk add --no-cache \
-    ;
+    && \
+    apk add --no-cache tzdata
 
 RUN addgroup -S nginx && \
     adduser -D -S -h /var/cache/nginx -s /sbin/nologin -G nginx nginx && \
+    install -g nginx -o nginx -d /var/cache/ngx_pagespeed && \
     mkdir -p /var/log/nginx && \
     ln -sf /dev/stdout /var/log/nginx/access.log && \
-    ln -sf /dev/stderr /var/log/nginx/error.log && \
-    mkdir -p /var/cache/ngx_pagespeed && \
-    chown -R nginx:nginx /var/cache/ngx_pagespeed
+    ln -sf /dev/stderr /var/log/nginx/error.log
 
 EXPOSE 80
 
